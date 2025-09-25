@@ -1,0 +1,7 @@
+python-telegram-bot[ext]
+flask
+motor
+beautifulsoup4
+lxml
+requests
+python-dotenv
