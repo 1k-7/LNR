@@ -17,11 +17,6 @@ class SourceManager:
         """
         Dynamically imports all parser modules from the `sources` directory.
         """
-        # Correctly locate the 'sources' directory relative to this file's location
-        # __file__ -> lncrawl/core/sources.py
-        # dirname -> lncrawl/core
-        # dirname -> lncrawl
-        # dirname -> project_root
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         sources_dir = os.path.join(project_root, 'sources')
 
@@ -33,14 +28,12 @@ class SourceManager:
             for file in files:
                 if file.endswith('.py') and not file.startswith('__'):
                     module_path = os.path.join(root, file)
-                    # Create a Python module path (e.g., sources.en.f.fannovels_parser)
                     relative_path = os.path.relpath(module_path, project_root)
                     module_name = relative_path.replace(os.sep, '.')[:-3]
                     
                     try:
                         module = importlib.import_module(module_name)
                         for attr_name in dir(module):
-                            # Look for classes that end with 'Parser'
                             if attr_name.endswith('Parser') and attr_name != 'WebToEpubParser':
                                 ParserClass = getattr(module, attr_name)
                                 if hasattr(ParserClass, 'base_url') and isinstance(ParserClass.base_url, list):
@@ -56,7 +49,6 @@ class SourceManager:
         Returns an instance of the appropriate parser class for a given URL.
         """
         hostname = urlparse(url).netloc
-        # Support for www. and mobile (m.) subdomains
         if hostname.startswith('www.'):
             hostname = hostname[4:]
         elif hostname.startswith('m.'):
@@ -64,17 +56,13 @@ class SourceManager:
 
         ParserClass = self.parsers.get(hostname)
         if ParserClass:
-            return ParserClass(url) # Return an instance of the parser
+            return ParserClass(url)
         return None
 
-# --- Singleton Pattern ---
-# This ensures that we only create one SourceManager and load the parsers once.
 _source_manager_instance = None
 
 def get_source_manager():
-    """
-    Gets the single instance of the SourceManager.
-    """
+    """Gets the single instance of the SourceManager."""
     global _source_manager_instance
     if _source_manager_instance is None:
         _source_manager_instance = SourceManager()
