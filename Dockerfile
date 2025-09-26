@@ -7,4 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "main.py"]
+# Expose the port Gunicorn will run on
+EXPOSE 8080
+
+# Run the web server
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "main:app"]
