@@ -1,58 +1,54 @@
-import os
 import asyncio
+import os
+import logging
 from flask import Flask, request
 from telegram import Update
-from bot import TelegramBot # Import the bot from bot.py
+from bot import TelegramBot
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
 
-app = Flask(__name__)
+# Set up logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Initialize the bot
+# Initialize the Flask app and the bot
+app = Flask(__name__)
 bot = TelegramBot()
 
-@app.route("/")
-def index():
-    """A simple page to confirm the web server is running."""
-    return "Hello, I am the LNR bot!"
-
 @app.route(f"/{bot.TOKEN}", methods=["POST"])
-def webhook():
-    """This endpoint receives updates from Telegram."""
-    update_data = request.get_json(force=True)
-    update = Update.de_json(update_data, bot.application.bot)
-    # Using asyncio.run to handle the async process_update method
-    asyncio.run(bot.application.process_update(update))
+async def webhook():
+    """Endpoint that Telegram sends updates to."""
+    update = Update.de_json(request.get_json(force=True), bot.application.bot)
+    await bot.application.process_update(update)
     return "ok"
 
-@app.route('/setup')
-def setup_webhook():
-    """
-    A one-time setup page to link the bot with Telegram.
-    Visit this URL in your browser once after deploying.
-    """
+@app.route("/setup")
+async def setup_webhook():
+    """One-time setup page to register the webhook with Telegram."""
+    webhook_url = os.getenv("WEBHOOK_URL")
+    if not webhook_url:
+        return "ERROR: WEBHOOK_URL environment variable not set!", 500
+    
+    full_webhook_url = f"{webhook_url}/{bot.TOKEN}"
+    
     try:
-        # The set_webhook function needs to be async
-        async def set_hook():
-            webhook_url = os.getenv("WEBHOOK_URL")
-            if not webhook_url:
-                return "Error: WEBHOOK_URL environment variable not set!"
-            
-            full_webhook_url = f"{webhook_url}/{bot.TOKEN}"
-            success = await bot.application.bot.set_webhook(full_webhook_url)
-            if success:
-                return f"Webhook set successfully to: {full_webhook_url}"
-            else:
-                return "Webhook setup failed!"
-        
-        # Run the async function
-        return asyncio.run(set_hook())
-
+        success = await bot.application.bot.set_webhook(full_webhook_url)
+        if success:
+            logger.info("Webhook set successfully!")
+            return "Webhook Setup Successful!", 200
+        else:
+            logger.error("Webhook setup failed.")
+            return "Webhook Setup Failed!", 500
     except Exception as e:
-        return f"An error occurred: {e}"
+        logger.error(f"Error setting webhook: {e}")
+        return f"An error occurred: {e}", 500
 
 if __name__ == "__main__":
-    # This part is for local testing and will not be used on Render
-    app.run(debug=True)
+    # This part is for local development and will not be used on Render.
+    # Render uses the CMD from the Dockerfile to run the application.
+    logger.info("This script is not meant to be run directly in production.")
