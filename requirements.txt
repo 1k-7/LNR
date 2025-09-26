@@ -1,6 +1,12 @@
-flask
+# Flask and Server
+flask[async]
 gunicorn
+uvicorn
+
+# Telegram Bot
 python-telegram-bot[ext]
+
+# Database & Other Tools
 motor
 beautifulsoup4
 lxml
