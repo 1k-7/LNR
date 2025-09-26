@@ -1,4 +1,4 @@
-​python-telegram-bot[ext]
+python-telegram-bottext]
 flask
 motor
 beautifulsoup4
@@ -7,3 +7,4 @@ requests
 python-dotenv
 Pillow
 gunicorn
+
