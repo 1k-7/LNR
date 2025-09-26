@@ -1,12 +1,13 @@
 import os
 import asyncio
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 from lncrawl.core.app import App
 from lncrawl.database import Database
 from lncrawl.core.sources import get_parser_for_url
-from lncrawl.binders.epub import EbookBuilder # We need a way to build the ebook
+from lncrawl.binders.epub import EbookBuilder
 
 class TelegramBot:
     def __init__(self):
@@ -30,7 +31,8 @@ class TelegramBot:
         self.application.add_handler(conv_handler)
 
     def start_webhook(self, webhook_url):
-        # Your webhook setup remains the same
+        # Your webhook setup code would go here. For now, it's a placeholder.
+        # This will need to be implemented for web service deployment.
         pass
 
     async def init_app(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -58,52 +60,67 @@ class TelegramBot:
 
         loop = asyncio.get_event_loop()
         for url in urls:
-            # Run each URL process in a separate thread
-            loop.run_in_executor(self.executor, self.process_single_url, url, chat_id)
+            # Pass the bot instance to the thread
+            loop.run_in_executor(self.executor, self.process_single_url, url, chat_id, self.application.bot)
         
         return ConversationHandler.END
 
-    def process_single_url(self, url, chat_id):
-        # This is where the magic happens!
-        asyncio.run(self.application.bot.send_message(chat_id, text=f"Starting download for: {url}"))
+    def process_single_url(self, url, chat_id, bot):
+        # This function runs in a separate thread.
+        # It needs its own event loop to call async bot methods.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
-        ParserClass = get_parser_for_url(url)
-        if not ParserClass:
-            asyncio.run(self.application.bot.send_message(chat_id, text=f"Sorry, the site for this URL is not supported: {url}"))
-            return
-
         try:
-            # 1. Initialize the correct parser
-            parser = ParserClass(url)
+            loop.run_until_complete(bot.send_message(chat_id, text=f"🚀 Starting download for: {url}"))
             
-            # 2. Scrape novel info and chapter list
+            ParserClass = get_parser_for_url(url)
+            if not ParserClass:
+                loop.run_until_complete(bot.send_message(chat_id, text=f"❌ Sorry, the site for this URL is not supported: {url}"))
+                return
+
+            # 1. Scrape data
+            parser = ParserClass(url)
             parser.read_novel_info()
             
-            # 3. Download all chapter bodies
-            # (In a real app, you'd let the user select chapters)
-            for chapter in parser.chapters:
+            loop.run_until_complete(bot.send_message(chat_id, text=f"Found '{parser.novel_title}' with {len(parser.chapters)} chapters. Downloading content..."))
+            
+            # Here, we'll just download the first 5 chapters for a quick test.
+            # Remove the '[:5]' to download all chapters.
+            chapters_to_download = parser.chapters[:5] 
+            for chapter in chapters_to_download:
                 chapter['body'] = parser.download_chapter_body(chapter['url'])
             
-            # 4. Build the EPUB file
-            ebook = EbookBuilder()
-            # The builder needs more parameters, this is a simplified example
-            # You would pass novel title, author, cover, chapters etc.
-            # ebook.title = parser.novel_title
-            # ebook.author = parser.novel_author
-            # ebook.chapters = parser.chapters
-            # output_path = ebook.write() # This would create the file
+            loop.run_until_complete(bot.send_message(chat_id, text=f"📚 Download complete. Now creating your e-book..."))
 
-            # For now, we'll just simulate success and send a message
-            # In a real app, you would send the actual file:
-            # context.bot.send_document(chat_id, document=open(output_path, 'rb'))
-            message = f"✅ Successfully processed: {parser.novel_title}"
-            asyncio.run(self.application.bot.send_message(chat_id, text=message))
+            # 2. Build the EPUB file
+            builder = EbookBuilder()
+            output_filename = f"{parser.novel_title}.epub"
+            
+            builder.build(
+                title=parser.novel_title,
+                author=parser.novel_author,
+                cover_url=parser.novel_cover,
+                chapters=chapters_to_download,
+                output_path=output_filename
+            )
+            
+            loop.run_until_complete(bot.send_message(chat_id, text=f"✅ E-book created! Uploading now..."))
+            
+            # 3. Send the file
+            with open(output_filename, 'rb') as f:
+                loop.run_until_complete(bot.send_document(chat_id, document=f, filename=output_filename))
+            
+            # 4. Clean up the created file
+            os.remove(output_filename)
 
         except Exception as e:
-            error_message = f"❌ Failed to process {url}. Error: {e}"
+            error_message = f"❌ Failed to process {url}.\nError: {e}"
             print(error_message)
-            asyncio.run(self.application.bot.send_message(chat_id, text=error_message))
-
+            traceback.print_exc() # For detailed debugging in your server logs
+            loop.run_until_complete(bot.send_message(chat_id, text=error_message))
+        finally:
+            loop.close()
 
     async def cancel_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = str(update.effective_message.chat_id)
