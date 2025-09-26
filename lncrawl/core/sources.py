@@ -1,47 +1,81 @@
-import os
 import importlib
+import logging
+import os
 from urllib.parse import urlparse
 
-# This will hold all the discovered parser classes
-# e.g., {'fannovels.com': FanNovelsParser, 'royalroad.com': RoyalRoadParser}
-_PARSERS = {}
+logger = logging.getLogger(__name__)
 
-def load_sources():
+class SourceManager:
     """
-    Finds and loads all parser files from the 'sources' directory.
-    This should only be run once when the application starts.
+    Loads and manages all available parser classes from the 'sources' directory.
     """
-    if _PARSERS:
-        return # Already loaded
+    def __init__(self):
+        self.parsers = {}
+        self.load_parsers()
 
-    sources_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'sources')
-    
-    for root, dirs, files in os.walk(sources_dir):
-        for file in files:
-            if file.endswith('_parser.py'):
-                # Construct the module path (e.g., sources.en.f.fannovels_parser)
-                relative_path = os.path.relpath(root, sources_dir)
-                module_path = 'sources.' + os.path.join(relative_path, file[:-3]).replace(os.sep, '.')
-                
-                try:
-                    module = importlib.import_module(module_path)
-                    for attr_name in dir(module):
-                        # Find the class that inherits from WebToEpubParser
-                        attr = getattr(module, attr_name)
-                        if isinstance(attr, type) and hasattr(attr, 'base_url'):
-                            for url in attr.base_url:
-                                domain = urlparse(url).netloc.replace('www.', '')
-                                _PARSERS[domain] = attr
-                                print(f"-> Loaded parser for: {domain}")
-                except Exception as e:
-                    print(f"Failed to load parser from {module_path}: {e}")
+    def load_parsers(self):
+        """
+        Dynamically imports all parser modules from the `sources` directory.
+        """
+        # Correctly locate the 'sources' directory relative to this file's location
+        # __file__ -> lncrawl/core/sources.py
+        # dirname -> lncrawl/core
+        # dirname -> lncrawl
+        # dirname -> project_root
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        sources_dir = os.path.join(project_root, 'sources')
 
-def get_parser_for_url(url):
-    """
-    Finds the correct parser class for a given URL.
-    """
-    domain = urlparse(url).netloc.replace('www.', '')
-    return _PARSERS.get(domain)
+        if not os.path.isdir(sources_dir):
+            logger.warning(f"Sources directory not found at: {sources_dir}")
+            return
 
-# Automatically load all parsers when this module is imported
-load_sources()
+        for root, _, files in os.walk(sources_dir):
+            for file in files:
+                if file.endswith('.py') and not file.startswith('__'):
+                    module_path = os.path.join(root, file)
+                    # Create a Python module path (e.g., sources.en.f.fannovels_parser)
+                    relative_path = os.path.relpath(module_path, project_root)
+                    module_name = relative_path.replace(os.sep, '.')[:-3]
+                    
+                    try:
+                        module = importlib.import_module(module_name)
+                        for attr_name in dir(module):
+                            # Look for classes that end with 'Parser'
+                            if attr_name.endswith('Parser') and attr_name != 'WebToEpubParser':
+                                ParserClass = getattr(module, attr_name)
+                                if hasattr(ParserClass, 'base_url') and isinstance(ParserClass.base_url, list):
+                                    for url in ParserClass.base_url:
+                                        hostname = urlparse(url).netloc
+                                        self.parsers[hostname] = ParserClass
+                                        logger.info(f"-> Loaded parser for: {hostname}")
+                    except Exception as e:
+                        logger.error(f"Failed to load parser from {module_name}: {e}")
+
+    def get_parser(self, url):
+        """
+        Returns an instance of the appropriate parser class for a given URL.
+        """
+        hostname = urlparse(url).netloc
+        # Support for www. and mobile (m.) subdomains
+        if hostname.startswith('www.'):
+            hostname = hostname[4:]
+        elif hostname.startswith('m.'):
+            hostname = hostname[2:]
+
+        ParserClass = self.parsers.get(hostname)
+        if ParserClass:
+            return ParserClass(url) # Return an instance of the parser
+        return None
+
+# --- Singleton Pattern ---
+# This ensures that we only create one SourceManager and load the parsers once.
+_source_manager_instance = None
+
+def get_source_manager():
+    """
+    Gets the single instance of the SourceManager.
+    """
+    global _source_manager_instance
+    if _source_manager_instance is None:
+        _source_manager_instance = SourceManager()
+    return _source_manager_instance
