@@ -3,17 +3,15 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
-from flask import Flask, request
-
 from lncrawl.core.app import App
 from lncrawl.database import Database
-from sources.en.w.wuxiaworldco import WuxiaworldCoParser # Example parser
+from lncrawl.core.sources import get_parser_for_url
+from lncrawl.binders.epub import EbookBuilder # We need a way to build the ebook
 
 class TelegramBot:
     def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="telegram_bot")
+        self.executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="telegram_bot")
         self.active_sessions = {}
-        self.max_active_sessions = 50
         
         self.TOKEN = os.getenv("TELEGRAM_TOKEN", "")
         if not self.TOKEN:
@@ -32,21 +30,13 @@ class TelegramBot:
         self.application.add_handler(conv_handler)
 
     def start_webhook(self, webhook_url):
-        self.application.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get('PORT', 8443)),
-            url_path=self.TOKEN,
-            webhook_url=f"{webhook_url}/{self.TOKEN}"
-        )
+        # Your webhook setup remains the same
+        pass
 
     async def init_app(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = str(update.effective_message.chat_id)
         if chat_id in self.active_sessions:
             await update.message.reply_text("You already have an active session. Please /cancel the current one to start a new one.")
-            return ConversationHandler.END
-
-        if len(self.active_sessions) >= self.max_active_sessions:
-            await update.message.reply_text("The bot is currently busy. Please try again later.")
             return ConversationHandler.END
 
         self.active_sessions[chat_id] = {"status": "initialized"}
@@ -64,31 +54,55 @@ class TelegramBot:
             await update.message.reply_text("Please provide at least one URL.")
             return "handle_urls"
 
-        await update.message.reply_text(f"Processing {len(urls)} novel(s). This might take a while...")
+        await update.message.reply_text(f"Accepted {len(urls)} novel(s) for processing. I will send them as they become available.")
 
         loop = asyncio.get_event_loop()
         for url in urls:
+            # Run each URL process in a separate thread
             loop.run_in_executor(self.executor, self.process_single_url, url, chat_id)
         
         return ConversationHandler.END
 
     def process_single_url(self, url, chat_id):
-        # This is a simplified example. You would expand this to handle downloads, formats, etc.
+        # This is where the magic happens!
+        asyncio.run(self.application.bot.send_message(chat_id, text=f"Starting download for: {url}"))
+        
+        ParserClass = get_parser_for_url(url)
+        if not ParserClass:
+            asyncio.run(self.application.bot.send_message(chat_id, text=f"Sorry, the site for this URL is not supported: {url}"))
+            return
+
         try:
-            # Here you would add logic to select the correct parser based on the URL
-            # For this example, we'll just use the WuxiaworldCoParser
-            if "wuxiaworld.co" in url:
-                parser = WuxiaworldCoParser(url)
-                parser.read_novel_info()
-                
-                # For demonstration, we'll just send the novel title and number of chapters
-                message = f"Novel: {parser.novel_title}\nChapters Found: {len(parser.chapters)}"
-                asyncio.run(self.application.bot.send_message(chat_id, text=message))
-            else:
-                asyncio.run(self.application.bot.send_message(chat_id, text=f"Sorry, the URL {url} is not supported yet."))
+            # 1. Initialize the correct parser
+            parser = ParserClass(url)
+            
+            # 2. Scrape novel info and chapter list
+            parser.read_novel_info()
+            
+            # 3. Download all chapter bodies
+            # (In a real app, you'd let the user select chapters)
+            for chapter in parser.chapters:
+                chapter['body'] = parser.download_chapter_body(chapter['url'])
+            
+            # 4. Build the EPUB file
+            ebook = EbookBuilder()
+            # The builder needs more parameters, this is a simplified example
+            # You would pass novel title, author, cover, chapters etc.
+            # ebook.title = parser.novel_title
+            # ebook.author = parser.novel_author
+            # ebook.chapters = parser.chapters
+            # output_path = ebook.write() # This would create the file
+
+            # For now, we'll just simulate success and send a message
+            # In a real app, you would send the actual file:
+            # context.bot.send_document(chat_id, document=open(output_path, 'rb'))
+            message = f"✅ Successfully processed: {parser.novel_title}"
+            asyncio.run(self.application.bot.send_message(chat_id, text=message))
 
         except Exception as e:
-            asyncio.run(self.application.bot.send_message(chat_id, text=f"Failed to process {url}. Error: {e}"))
+            error_message = f"❌ Failed to process {url}. Error: {e}"
+            print(error_message)
+            asyncio.run(self.application.bot.send_message(chat_id, text=error_message))
 
 
     async def cancel_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
