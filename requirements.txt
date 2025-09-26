@@ -2,9 +2,10 @@ flask[async]
 gunicorn
 uvicorn
 python-telegram-bot[ext]
-​motor
+motor
 beautifulsoup4
 lxml
 requests
 python-dotenv
 Pillow
+
