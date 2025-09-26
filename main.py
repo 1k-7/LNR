@@ -1,66 +1,58 @@
 import os
 import asyncio
-from flask import Flask, request, render_template_string
+from flask import Flask, request
 from telegram import Update
-from bot import TelegramBot
+from bot import TelegramBot # Import the bot from bot.py
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
-# Initialize the bot once
-bot = TelegramBot()
 app = Flask(__name__)
+
+# Initialize the bot
+bot = TelegramBot()
+
+@app.route("/")
+def index():
+    """A simple page to confirm the web server is running."""
+    return "Hello, I am the LNR bot!"
 
 @app.route(f"/{bot.TOKEN}", methods=["POST"])
 def webhook():
     """This endpoint receives updates from Telegram."""
-    update = Update.de_json(request.get_json(force=True), bot.application.bot)
+    update_data = request.get_json(force=True)
+    update = Update.de_json(update_data, bot.application.bot)
+    # Using asyncio.run to handle the async process_update method
     asyncio.run(bot.application.process_update(update))
-    return "ok", 200
+    return "ok"
 
-@app.route("/setup")
-async def setup_webhook():
+@app.route('/setup')
+def setup_webhook():
     """
     A one-time setup page to link the bot with Telegram.
-    Visit this page in your browser once after deploying.
+    Visit this URL in your browser once after deploying.
     """
     try:
-        WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-        if not WEBHOOK_URL:
-            return "<html><body><h1>Error</h1><p>WEBHOOK_URL environment variable is not set.</p></body></html>", 500
-
-        full_webhook_url = f"{WEBHOOK_URL}/{bot.TOKEN}"
+        # The set_webhook function needs to be async
+        async def set_hook():
+            webhook_url = os.getenv("WEBHOOK_URL")
+            if not webhook_url:
+                return "Error: WEBHOOK_URL environment variable not set!"
+            
+            full_webhook_url = f"{webhook_url}/{bot.TOKEN}"
+            success = await bot.application.bot.set_webhook(full_webhook_url)
+            if success:
+                return f"Webhook set successfully to: {full_webhook_url}"
+            else:
+                return "Webhook setup failed!"
         
-        await bot.application.bot.set_webhook(url=full_webhook_url)
-        info = await bot.application.bot.get_webhook_info()
-        
-        return render_template_string("""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Webhook Setup</title>
-            <style>
-                body { font-family: sans-serif; padding: 2em; }
-                code { background-color: #eee; padding: 3px; border-radius: 3px; }
-            </style>
-        </head>
-        <body>
-            <h1>✅ Webhook Setup Successful!</h1>
-            <p>Your bot is now linked to Telegram.</p>
-            <h3>Details:</h3>
-            <ul>
-                <li>URL: <code>{{ info.url }}</code></li>
-                <li>Pending Updates: <code>{{ info.pending_update_count }}</code></li>
-                <li>Last Error: <code>{{ info.last_error_message or 'None' }}</code></li>
-            </ul>
-            <p>You can now go to your Telegram chat and send <b>/start</b>.</p>
-        </body>
-        </html>
-        """, info=info)
+        # Run the async function
+        return asyncio.run(set_hook())
 
     except Exception as e:
-        return f"<html><body><h1>❌ Webhook Setup Failed</h1><p>Error: {e}</p></body></html>", 500
+        return f"An error occurred: {e}"
 
-if __name__ == '__main__':
-    print("This script is meant to be run by a Gunicorn server in production.")
+if __name__ == "__main__":
+    # This part is for local testing and will not be used on Render
+    app.run(debug=True)
