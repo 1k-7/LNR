@@ -1,30 +1,31 @@
 import os
+import asyncio
 from flask import Flask, request
 from telegram import Update
-from lncrawl.bots.telegram import TelegramBot
+from bot import TelegramBot  # Import the bot from the new file
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Initialize the bot and its application
-bot = TelegramBot()
+# Initialize the bot once
+telegram_bot = TelegramBot()
 
 # Initialize Flask app
 app = Flask(__name__)
 
-@app.route(f"/{bot.TOKEN}", methods=["POST"])
+@app.route(f"/{telegram_bot.TOKEN}", methods=["POST"])
 def webhook():
     """This endpoint receives updates from Telegram."""
-    update = Update.de_json(request.get_json(force=True), bot.application.bot)
-    bot.application.process_update(update)
+    update_data = request.get_json(force=True)
+    update = Update.de_json(update_data, telegram_bot.application.bot)
+    
+    # Process the update in a non-blocking way
+    asyncio.run(telegram_bot.application.process_update(update))
+    
     return "ok"
 
-# The following block is for local testing and should not run on Render
-if __name__ == "__main__":
-    # In a production environment like Render, Gunicorn runs the 'app' object directly.
-    # The webhook needs to be set MANUALLY once.
-    # You can do this by running a small script or visiting a specific URL.
-    # For now, we assume the webhook is already set.
-    print("Flask app is ready. To run locally, use a WSGI server like Waitress or Gunicorn.")
-    print(f"Webhook endpoint is at: /<{bot.TOKEN}>")
+# This part is only for local testing and should NOT be run on Render
+if __name__ == '__main__':
+    print("This script is meant to be run by a Gunicorn server in production.")
+    print("It does not set the webhook. Use 'run_webhook.py' for that.")
