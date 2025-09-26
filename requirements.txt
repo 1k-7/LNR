@@ -1,4 +1,4 @@
-​python-telegram-bot[ext]
+python-telegram-bottext]
 flask
 motor
 beautifulsoup4
@@ -6,3 +6,4 @@ lxml
 requests
 python-dotenv
 Pillow
+
