@@ -16,28 +16,24 @@ from lncrawl.core.sources import get_parser_for_url
 from lncrawl.binders.epub import EbookBuilder
 from lncrawl.database import Database
 
-# Helper to sanitize filenames
 def sanitize_filename(name):
     return "".join(c for c in name if c.isalnum() or c in (' ', '.', '_')).rstrip()
 
 class TelegramBot:
     def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="telegram_bot")
+        self.executor = ThreadPoolExecutor(max_workers=5)
         self.active_sessions = {}
         
         self.TOKEN = os.getenv("TELEGRAM_TOKEN")
         if not self.TOKEN:
-            raise Exception("FATAL: TELEGRAM_TOKEN not found in environment variables.")
+            raise Exception("FATAL: TELEGRAM_TOKEN not found.")
 
-        mongo_uri = os.getenv("MONGO_URI")
-        self.db = Database(mongo_uri) if mongo_uri else None
+        self.db = Database(os.getenv("MONGO_URI")) if os.getenv("MONGO_URI") else None
         
         self.application = Application.builder().token(self.TOKEN).build()
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler("start", self.init_app)],
-            states={
-                "handle_urls": [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_urls)],
-            },
+            states={ "handle_urls": [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_urls)] },
             fallbacks=[CommandHandler("cancel", self.cancel_session)],
         )
         self.application.add_handler(conv_handler)
@@ -45,79 +41,69 @@ class TelegramBot:
     async def init_app(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = str(update.effective_chat.id)
         if chat_id in self.active_sessions:
-            await update.message.reply_text("You have a job in progress. Please wait for it to complete or /cancel it.")
+            await update.message.reply_text("You have a job in progress. Please wait for it to complete.")
             return ConversationHandler.END
 
         self.active_sessions[chat_id] = True
-        await update.message.reply_text("Welcome! Send me a URL of a light novel to download as an EPUB.")
+        await update.message.reply_text("Welcome! Send me the URL of a light novel to download.")
         return "handle_urls"
 
     async def handle_urls(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = str(update.effective_chat.id)
         urls = update.message.text.strip().splitlines()
         
-        await update.message.reply_text(f"Accepted {len(urls)} novel(s). Processing will begin shortly...")
-
-        # Use the application's job queue for better integration and persistence
+        await update.message.reply_text(f"Accepted {len(urls)} novel(s) for processing.")
+        
+        loop = asyncio.get_running_loop()
         for url in urls:
-            context.job_queue.run_once(self.run_download_job, 1, data={'chat_id': chat_id, 'url': url}, name=f"job_{chat_id}_{url}")
+            loop.run_in_executor(self.executor, self.process_single_url, url, chat_id, self.application.bot)
         
         return ConversationHandler.END
 
-    @staticmethod
-    async def run_download_job(context: ContextTypes.DEFAULT_TYPE):
-        job_data = context.job.data
-        chat_id = job_data['chat_id']
-        url = job_data['url']
-        bot = context.bot
+    def process_single_url(self, url, chat_id, bot):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
         try:
-            await bot.send_message(chat_id, text=f"🚀 Starting: {url}")
-            
+            loop.run_until_complete(bot.send_message(chat_id, text=f"🚀 Starting: {url}"))
             ParserClass = get_parser_for_url(url)
             if not ParserClass:
-                await bot.send_message(chat_id, text=f"❌ Unsupported Site: {url}")
+                loop.run_until_complete(bot.send_message(chat_id, text=f"❌ Unsupported Site: {url}"))
                 return
 
             parser = ParserClass(url)
             parser.read_novel_info()
             
-            await bot.send_message(chat_id, text=f"Downloading '{parser.novel_title}' ({len(parser.chapters)} chapters)...")
+            loop.run_until_complete(bot.send_message(chat_id, text=f"Downloading '{parser.novel_title}'..."))
             
-            downloaded_chapters = []
-            for i, chapter in enumerate(parser.chapters):
-                # Limit to 5 chapters for testing; remove [:5] for full download
-                if i >= 5: 
-                    break
+            for chapter in parser.chapters:
                 chapter['body'] = parser.download_chapter_body(chapter['url'])
-                downloaded_chapters.append(chapter)
 
-            if not downloaded_chapters:
-                raise Exception("No chapters were downloaded.")
-
-            await bot.send_message(chat_id, text=f"📚 Creating e-book...")
+            loop.run_until_complete(bot.send_message(chat_id, text=f"📚 Creating e-book..."))
 
             builder = EbookBuilder()
             output_filename = f"{sanitize_filename(parser.novel_title)}.epub"
             
             builder.build(
                 title=parser.novel_title, author=parser.novel_author,
-                cover_url=parser.novel_cover, chapters=downloaded_chapters,
+                cover_url=parser.novel_cover, chapters=parser.chapters,
                 output_path=output_filename
             )
             
-            await bot.send_message(chat_id, text=f"✅ Uploading '{output_filename}'...")
+            loop.run_until_complete(bot.send_message(chat_id, text=f"✅ Uploading '{output_filename}'..."))
             
             with open(output_filename, 'rb') as f:
-                await bot.send_document(chat_id, document=f, filename=output_filename)
+                loop.run_until_complete(bot.send_document(chat_id, document=f, filename=output_filename))
             
             os.remove(output_filename)
 
-        except Exception as e:
-            error_message = f"❌ Failed to process {url}.\nError: {e}"
+        except Exception:
+            error_message = f"❌ Failed to process {url}.\nError:\n{traceback.format_exc()}"
             print(error_message)
-            traceback.print_exc()
-            await bot.send_message(chat_id, text=error_message)
+            loop.run_until_complete(bot.send_message(chat_id, text=error_message))
+        finally:
+            self.active_sessions.pop(chat_id, None)
+            loop.close()
 
     async def cancel_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = str(update.effective_chat.id)
