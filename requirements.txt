@@ -1,8 +1,6 @@
 # Flask and Server
 flask[async]
 gunicorn
-uvicorn
-
 # Telegram Bot
 python-telegram-bot[ext]
 
@@ -13,3 +11,4 @@ lxml
 requests
 python-dotenv
 Pillow
+
