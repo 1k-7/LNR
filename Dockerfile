@@ -16,6 +16,5 @@ COPY . .
 # Expose the port the app runs on
 EXPOSE 8080
 
-# Run the web server using Gunicorn (a production-ready server for Python)
-# This is the standard way to run a Flask app on Render.
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "main:app"]
+# Run the web server using Gunicorn with the Uvicorn worker for async support
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8080", "main:app"]
