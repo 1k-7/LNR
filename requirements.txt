@@ -1,6 +1,5 @@
-flask[async]
+flask
 gunicorn
-uvicorn
 python-telegram-bot[ext]
 motor
 beautifulsoup4
@@ -8,4 +7,3 @@ lxml
 requests
 python-dotenv
 Pillow
-
